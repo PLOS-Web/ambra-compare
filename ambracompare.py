@@ -1,19 +1,14 @@
 from selenium import webdriver
 from selenium.common.exceptions import NoSuchElementException
-import paramiko
 
 from PIL import Image
 import subprocess
 import logging
 import time
 
-logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.DEBUG)
+from rhyno import Rhyno
 
-def get_screenshot(url, filename):
-    ff_webdriver = webdriver.Firefox()
-    ff_webdriver.get(url)
-    ff_webdriver.save_screenshot(filename)
-    ff_webdriver.quit()
+logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.DEBUG)
 
 def same_size_erize(image_1, image_2):
     img_1 = Image.open(image_1)
@@ -92,12 +87,28 @@ class WebprodDriver(object):
             return
         self.webdriver.find_element_by_id('ingestArchives_force').click()
         self.webdriver.find_element_by_id('ingestArchives_action').click()
+
+    def get_screenshot(self, url, filename):
+        self.webdriver.get(url)
+        self.webdriver.save_screenshot(filename)
     
+    def disable(self, doi):
+        self.webdriver.get('https://webprod.plosjournals.org/admin')
+        elem_doi_field = self.webdriver.find_element_by_xpath("//form[@id='disableArticle']/input[@name='article']")
+        elem_doi_field.send_keys("info:doi/10.1371/journal.%s" % doi)
+        self.webdriver.find_element_by_xpath("//form[@id='disableArticle']/input[@type='submit']").click()
+        alert = self.webdriver.switch_to_alert()
+        alert.accept()
+
     def close(self):
         self.webdriver.close()
     
 if __name__ == "__main__":
     wpd = WebprodDriver()
     upload_webprod('pone.0079998.zip')
-    wpd.ingest('pone.0079998')
+    #wpd.ingest('pone.0079998')
+
+    r = Rhyno('https://webprod.plosjournals.org/api/')
+    r.ingest('pone.0079998.zip', force_reingest=True)
+    wpd.disable('pone.0079998')
     
