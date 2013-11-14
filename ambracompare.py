@@ -77,6 +77,8 @@ def ingest_webprod_admin(doi):
         ff_webdriver.find_element_by_xpath("//input[@value='%s.zip']" % doi).click()
     except NoSuchElementException, e:
         logging.error("Could not find '%s.zip' in admin ingestibles" % doi)
+        ff_webdriver.quit()
+        return
     ff_webdriver.find_element_by_id('ingestArchives_force').click()
     ff_webdriver.find_element_by_id('ingestArchives_action').click()
     
