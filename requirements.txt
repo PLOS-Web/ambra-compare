@@ -1,5 +1,9 @@
 Pillow==2.2.1
 argparse==1.2.1
 distribute==0.6.24
+ecdsa==0.10
+pycrypto==2.6.1
+requests==2.0.1
+rhyno==0.1.0
 selenium==2.37.2
 wsgiref==0.1.2
