@@ -1,5 +1,7 @@
 from selenium import webdriver
 from selenium.common.exceptions import NoSuchElementException
+import paramiko
+
 from PIL import Image
 import subprocess
 import logging
@@ -62,37 +64,40 @@ def compare_prod_stage(doi):
     same_size_erize("%s-stage.png" % doi, "%s-prod.png" % doi)
     make_diff("%s-stage.png" % doi, "%s-prod.png" % doi, "%s-diff.png" % doi)
 
-def ingest_webprod_admin(doi):
-    ff_webdriver = webdriver.Firefox()
-
-    ff_webdriver.get('http://stage.plosjournals.org/admin') #TODO update to webrod
-    elem_email = ff_webdriver.find_element_by_id('username')
-    elem_email.send_keys("{username}") #TODO fill in
-    elem_password = ff_webdriver.find_element_by_id('password')
-    elem_password.send_keys("{password}") #TODO fill in
-    ff_webdriver.find_element_by_name('submit').click()
-    time.sleep(1)
-
-    try:
-        ff_webdriver.find_element_by_xpath("//input[@value='%s.zip']" % doi).click()
-    except NoSuchElementException, e:
-        logging.error("Could not find '%s.zip' in admin ingestibles" % doi)
-        ff_webdriver.quit()
-        return
-    ff_webdriver.find_element_by_id('ingestArchives_force').click()
-    ff_webdriver.find_element_by_id('ingestArchives_action').click()
-    
-    ff_webdriver.quit()
-
-def upload_ingest_webprod_admin(doi, filename):
-    iad_loc = "iad-webprod-devstack01.int.plos.org:/var/spool/ambra/ingestible/"
+def upload_webprod(filename):
+    iad_loc = "iad-webprod-devstack01.int.plos.org:/var/spool/ambra/ingestion-queue/"
     proc = subprocess.Popen(["scp", filename, iad_loc],
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     proc.wait()
-    
-    ingest_webprod_admin(doi)
+    logging.debug("scp return code: %i", proc.returncode)
 
-    
+class WebprodDriver(object):
+    def __init__(self):
+        self.webdriver = webdriver.Firefox()
+ #TODO update to webrod
 
+        self.webdriver.get('https://register-webprod.plosjournals.org/cas/login?service=http%3A%2F%2Fwebprod.plosjournals.org%2Fuser%2Fsecure%2FsecureRedirect.action%3FgoTo%3D%252Fhome.action')
+        elem_email = self.webdriver.find_element_by_id('username')
+        elem_email.send_keys("brakit@gmail.com") #TODO fill in
+        elem_password = self.webdriver.find_element_by_id('password')
+        elem_password.send_keys("123456") #TODO fill in
+        self.webdriver.find_element_by_name('submit').click()
+        
+    def ingest(self, doi):
+        self.webdriver.get('https://webprod.plosjournals.org/admin')
+        try:
+            self.webdriver.find_element_by_xpath("//input[@value='%s.zip']" % doi).click()
+        except NoSuchElementException, e:
+            logging.error("Could not find '%s.zip' in admin ingestibles" % doi)
+            return
+        self.webdriver.find_element_by_id('ingestArchives_force').click()
+        self.webdriver.find_element_by_id('ingestArchives_action').click()
+    
+    def close(self):
+        self.webdriver.close()
+    
 if __name__ == "__main__":
-    #compare_prod_stage('pone.0080411')
+    wpd = WebprodDriver()
+    upload_webprod('pone.0079998.zip')
+    wpd.ingest('pone.0079998')
+    
