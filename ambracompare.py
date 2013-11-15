@@ -71,6 +71,7 @@ def compare_prod_stage(doi):
 
 def upload_webprod(filename):
     iad_loc = "iad-webprod-devstack01.int.plos.org:/var/spool/ambra/ingestion-queue/"
+    logger.info("running: `scp %s %s`" % (filename, iad_loc))
     proc = subprocess.Popen(["scp", filename, iad_loc],
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     proc.wait()
@@ -125,14 +126,14 @@ def compare_web_rhino(webdriver, rdriver, doi, filename, output_location=""):
     logger.info("Disabling %s if already exists" % doi)
     webdriver.disable(doi)
     logger.info("Uploading %s ..." % filename)
-    upload_webprod('%s.zip' % doi)    
+    upload_webprod(filename)    
     webdriver.ingest(doi)
     webdriver.get_screenshot_doi(doi, '%s%s-web.png' % (output_location, doi))
 
     logger.info("Disabling %s if already exists" % doi)
     webdriver.disable(doi)
     logger.info("Uploading %s ..." % filename)
-    upload_webprod('%s.zip' % doi)
+    upload_webprod(filename)
     logger.info("Rhino ingesting %s ..." % doi) 
     rdriver.ingest('%s.zip' % doi, force_reingest=True)
     webdriver.get_screenshot_doi(doi, '%s%s-rhino.png' % (output_location, doi))
@@ -149,17 +150,34 @@ def get_articles_in_dir(dirpath):
     for f in glob(os.path.join(dirpath, "*.zip")):
         directory, filename = os.path.split(f)
         doi = filename[0:-4]
-        ret += [(doi, filename)]
+        ret += [(doi, f)]
 
     return ret
 
+
+def get_random_ingested(n, dest):
+    """
+    get n articles from //ingested/ on stage and put in dest.
+    INCOMPLETE
+    """
+    trans = paramiko.Transport(('stage.plos.org', 22))
+    path = os.path.join(os.environ['HOME'], '.ssh', 'id_dsa')
+    key = paramiko.DSSKey.from_private_key_file(path, password="")
+    trans.connect(username='jlabarba', pkey=key)
+    session = trans.open_channel("session")
+    s = session.exec_command('ls')
+    exit_status = session.recv_exit_status()
+    print s
+    print exit_status
+
 if __name__ == "__main__":
+    
     wpd = WebprodDriver()
     r = Rhyno('https://webprod.plosjournals.org/api/')
 
-    #compare_web_rhino(wpd, r, doi, doi+'.zip', 'output/')
-    articles = get_articles_in_dir('input/')
+    articles = get_articles_in_dir('test/')
     for a in articles:
+        print a
         try:
             compare_web_rhino(wpd, r, a[0], a[1], 'output/')
         except Exception, e:
