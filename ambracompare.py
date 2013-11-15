@@ -1,5 +1,7 @@
 from selenium import webdriver
 from selenium.common.exceptions import NoSuchElementException
+import os
+from glob import glob
 
 from PIL import Image
 import subprocess
@@ -8,7 +10,15 @@ import time
 
 from rhyno import Rhyno
 
-logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.DEBUG)
+logging.basicConfig(format='%(asctime)s %(levelname)s: %(message)s', level=logging.DEBUG)
+
+hdlr = logging.FileHandler('ambracompare.log')
+base_logger = logging.getLogger('')
+base_logger.addHandler(hdlr)
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
 
 def same_size_erize(image_1, image_2):
     img_1 = Image.open(image_1)
@@ -18,23 +28,23 @@ def same_size_erize(image_1, image_2):
 
     if img_1_height < img_2_height:
         height = img_2_height
-        logging.info("cropping %s height to %s ..." % (image_1, img_2_height))
+        logger.info("cropping %s height to %s ..." % (image_1, img_2_height))
     elif img_2_height < img_1_height:
         height = img_1_height
-        logging.info("cropping %s height to %s ..." % (image_2, img_1_height))
+        logger.info("cropping %s height to %s ..." % (image_2, img_1_height))
     else:
         height = img_2_height
-        logging.debug("Both images have same height, no cropping necessary.")
+        logger.debug("Both images have same height, no cropping necessary.")
 
     if img_1_width < img_2_width:
         width = img_2_width
-        logging.info("cropping %s width to %s ..." % (image_1, img_2_width))
+        logger.info("cropping %s width to %s ..." % (image_1, img_2_width))
     elif img_2_width < img_1_width:
         width = img_1_width
-        logging.info("cropping %s width to %s ..." % (image_2, img_1_width))
+        logger.info("cropping %s width to %s ..." % (image_2, img_1_width))
     else:
         width = img_2_width
-        logging.debug("Both images have same width, no cropping necessary.")
+        logger.debug("Both images have same width, no cropping necessary.")
 
     img_1 = img_1.crop((0, 0, height, width))
     img_1.save(image_1)
@@ -46,7 +56,7 @@ def make_diff(image_1, image_2, diff):
     compare_proc = subprocess.Popen(["compare", image_1, image_2, diff],
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     compare_proc.wait()
-    logging.debug("imagemagick 'compare' return code: %i", compare_proc.returncode)
+    logger.debug("imagemagick 'compare' return code: %i", compare_proc.returncode)
     return compare_proc.returncode
 
 def compare_prod_stage(doi):
@@ -64,9 +74,11 @@ def upload_webprod(filename):
     proc = subprocess.Popen(["scp", filename, iad_loc],
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     proc.wait()
-    logging.debug("scp return code: %i", proc.returncode)
+    logger.debug("scp return code: %i", proc.returncode)
 
 class WebprodDriver(object):
+    article_url_format = "https://webprod.plosjournals.org/article/info%%3Adoi%%2F10.1371%%2Fjournal.%s"
+
     def __init__(self):
         self.webdriver = webdriver.Firefox()
  #TODO update to webrod
@@ -79,11 +91,12 @@ class WebprodDriver(object):
         self.webdriver.find_element_by_name('submit').click()
         
     def ingest(self, doi):
+        logger.info("Web-based ingesting %s ..." % doi)
         self.webdriver.get('https://webprod.plosjournals.org/admin')
         try:
             self.webdriver.find_element_by_xpath("//input[@value='%s.zip']" % doi).click()
         except NoSuchElementException, e:
-            logging.error("Could not find '%s.zip' in admin ingestibles" % doi)
+            logger.error("Could not find '%s.zip' in admin ingestibles" % doi)
             return
         self.webdriver.find_element_by_id('ingestArchives_force').click()
         self.webdriver.find_element_by_id('ingestArchives_action').click()
@@ -91,7 +104,11 @@ class WebprodDriver(object):
     def get_screenshot(self, url, filename):
         self.webdriver.get(url)
         self.webdriver.save_screenshot(filename)
-    
+
+    def get_screenshot_doi(self, doi, filename):
+        logger.info("Capturing screenshot for %s ..." % doi)
+        self.get_screenshot(self.article_url_format % doi, filename)
+
     def disable(self, doi):
         self.webdriver.get('https://webprod.plosjournals.org/admin')
         elem_doi_field = self.webdriver.find_element_by_xpath("//form[@id='disableArticle']/input[@name='article']")
@@ -102,13 +119,52 @@ class WebprodDriver(object):
 
     def close(self):
         self.webdriver.close()
+
+def compare_web_rhino(webdriver, rdriver, doi, filename, output_location=""):
+    logger.info("Comparing web vs. rhino ingest for %s ..." % doi)
+    logger.info("Disabling %s if already exists" % doi)
+    webdriver.disable(doi)
+    logger.info("Uploading %s ..." % filename)
+    upload_webprod('%s.zip' % doi)    
+    webdriver.ingest(doi)
+    webdriver.get_screenshot_doi(doi, '%s%s-web.png' % (output_location, doi))
+
+    logger.info("Disabling %s if already exists" % doi)
+    webdriver.disable(doi)
+    logger.info("Uploading %s ..." % filename)
+    upload_webprod('%s.zip' % doi)
+    logger.info("Rhino ingesting %s ..." % doi) 
+    rdriver.ingest('%s.zip' % doi, force_reingest=True)
+    webdriver.get_screenshot_doi(doi, '%s%s-rhino.png' % (output_location, doi))
     
+    logger.info("Creating visual diff for %s ..." % doi)
+    make_diff('%s%s-web.png' % (output_location, doi), '%s%s-rhino.png' % (output_location, doi), '%s%s-diff.png' % (output_location, doi))
+    
+    logger.info("Finished comparing %s" % doi)
+
+
+def get_articles_in_dir(dirpath):
+    ret = []
+
+    for f in glob(os.path.join(dirpath, "*.zip")):
+        directory, filename = os.path.split(f)
+        doi = filename[0:-4]
+        ret += [(doi, filename)]
+
+    return ret
+
 if __name__ == "__main__":
     wpd = WebprodDriver()
-    upload_webprod('pone.0079998.zip')
-    #wpd.ingest('pone.0079998')
-
     r = Rhyno('https://webprod.plosjournals.org/api/')
-    r.ingest('pone.0079998.zip', force_reingest=True)
-    wpd.disable('pone.0079998')
+
+    #compare_web_rhino(wpd, r, doi, doi+'.zip', 'output/')
+    articles = get_articles_in_dir('input/')
+    for a in articles:
+        try:
+            compare_web_rhino(wpd, r, a[0], a[1], 'output/')
+        except Exception, e:
+            logger.error("Comparison for %s broke! See below ..." % a[0])
+            logger.exception(e)
+
+    wpd.close()
     
